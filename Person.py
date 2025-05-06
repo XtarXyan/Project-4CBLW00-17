@@ -10,8 +10,8 @@ import random
 # The total travel time for the day is calculated and returned.
 # Thanks Copilot for writing my comments
 
-class Agent:
-    def __init__(self, residence_coords=None, work_coords=None, walk_speed=4, bike_speed=10, bike_freq=0.0, work_freq=1.0, amenity_freqs=None, curiosity=1.0, seed=0):
+class Person:
+    def __init__(self, residence_coords, work_coords=None, walk_speed=4, bike_speed=10, bike_freq=0.0, work_freq=1.0, amenity_freqs=None, curiosity=1.0, seed=0):
         self.residence_coords = residence_coords  # This should be a tuple (latitude, longitude)
         self.work_coords = work_coords
         self.work_freq = work_freq  # Frequency of going to work (1.0 means every day)
@@ -21,7 +21,7 @@ class Agent:
         self.amenity_freqs = amenity_freqs # Dictionary of amenity types and their frequencies (0.0 to 1.0)
         self.curiosity = curiosity # Chance the agent will (recursively) pick the nearest amenity of a certain type over the following nearest one.
         random.seed(seed)
-        self.initialize_distances(self)
+        self.initialize_distances()
 
     def travel_time(self, distance, mode='walk'):
         if mode == 'walk':
@@ -59,6 +59,9 @@ class Agent:
         self.distances_r_amenity_walk = {}
         self.distances_r_amenity_bike = {}
         
+        if self.amenity_freqs is None:
+            return
+
         for amenity_type in self.amenity_freqs.keys():
             # Each entry is a list of distances to the nearest amenities of that type
             self.distance_r_amenity_walk[amenity_type] = dists.get_nearest_amenities(
@@ -114,6 +117,9 @@ class Agent:
                 print("No work location specified.")
         
         # Visit amenities based on frequency
+        if self.amenity_freqs is None:
+            print("No amenity frequencies specified.")
+            return total_travel_time
         for amenity_type, freq in self.amenity_freqs.items():
             if random.random() < freq:
                 # Check if the agent is at work or residence
