@@ -31,29 +31,38 @@ class Person:
         else:
             raise ValueError("Mode must be 'walk' or 'bike'")
         
-        time_hours = distance / speed
-        return time_hours * 60  # convert to minutes
+        time_hours = (distance / 1000) / speed
+        return time_hours * 60
     
     def initialize_distances(self):
         G_walk = dists.G_walk
         G_bike = dists.G_bike
 
         # Calculate distances from residence to all nodes in the graph
+        """
         self.distances_residence = {
             'walk': dists.calculate_distances(G_walk, self.residence_coords),
             'bike': dists.calculate_distances(G_bike, self.residence_coords)
         }
+        """
         if self.work_coords:
+            """
             self.distances_work = {
                 'walk': dists.calculate_distances(G_walk, self.work_coords),
                 'bike': dists.calculate_distances(G_bike, self.work_coords)
             }
+            """
             # Calculate distances between residence and work
             self.distance_rw_walk = dists.calculate_distances(G_walk, self.residence_coords, self.work_coords)
             self.distance_rw_bike = dists.calculate_distances(G_bike, self.residence_coords, self.work_coords)
         else:
             self.distance_rw_walk = None
             self.distance_rw_bike = None
+        
+        print("Distances from residence to work:")
+        print(self.distance_rw_walk)
+        print(self.distance_rw_bike)
+
         # Initialize distances for amenities
         
         self.distances_r_amenity_walk = {}
@@ -64,9 +73,9 @@ class Person:
 
         for amenity_type in self.amenity_freqs.keys():
             # Each entry is a list of distances to the nearest amenities of that type
-            self.distance_r_amenity_walk[amenity_type] = dists.get_nearest_amenities(
+            self.distances_r_amenity_walk[amenity_type] = dists.get_nearest_amenities(
                 G_walk, self.residence_coords, amenity_type, self.amenity_freqs[amenity_type]) 
-            self.distance_r_amenity_bike[amenity_type] = dists.get_nearest_amenities(
+            self.distances_r_amenity_bike[amenity_type] = dists.get_nearest_amenities(
                 G_bike, self.residence_coords, amenity_type, self.amenity_freqs[amenity_type])
             
         # Initialize distances for work amenities
@@ -78,9 +87,9 @@ class Person:
             # how much distance they are from work to the amenity and back to residence.
             # This is done to simulate the agent's behavior of going to work and then visiting an amenity on the way home.
             for amenity_type in self.amenity_freqs.keys():
-                self.distance_w_amenity_walk[amenity_type] = dists.get_nearest_amenities_inbetween(
+                self.distances_w_amenity_walk[amenity_type] = dists.get_nearest_amenities_inbetween(
                     G_walk, self.work_coords, self.residence_coords, amenity_type, self.amenity_freqs[amenity_type])
-                self.distance_w_amenity_bike[amenity_type] = dists.get_nearest_amenities_inbetween(
+                self.distances_w_amenity_bike[amenity_type] = dists.get_nearest_amenities_inbetween(
                     G_bike, self.work_coords, self.residence_coords, amenity_type, self.amenity_freqs[amenity_type])
         else:
             self.distances_w_amenity_walk = None
@@ -103,7 +112,6 @@ class Person:
         else:
             travel_mode = 'walk'
             print("Agent is walking today.")
-
 
         # Check if the agent is going to work today
         if random.random() < self.work_freq:
@@ -152,9 +160,3 @@ class Person:
                             break
         print(f"Total travel time for the day: {total_travel_time} minutes")
         return total_travel_time
-
-                    
-
-    
-
-    
