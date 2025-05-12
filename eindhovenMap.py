@@ -1,45 +1,58 @@
 import osmnx as ox
 import geopandas as gpd
+import pandas as pd
 import networkx as nx
-
+import matplotlib.pyplot as plt
+import numpy as np
 import folium
-import branca.colormap as cmap # a folium spin-off for colormapping.
+from shapely.geometry import Point, mapping
+from concurrent.futures import ThreadPoolExecutor
 
-### Quick description of what this does!
-#### The goal of this ""model"" is to see how well the existing neighborhoods in Eindhoven
-#### fit the criteria for a 15-minute city. It specifically uses OpenStreetMap's OSMnx 
-#### library, which allows us to epxloit the existing neighborhood classifications of 
-#### Eindhoven, and see which ones best fit the specified criteria (which can easily be)
-#### changed by changing tags.
+# Enable caching for OSM queries
+ox.settings.use_cache = True
 
-#### Ideally, the next step would be to not hard-code this but provide input on tags for
-#### the 15-minute city, but that's for later. For now I also added "loading" statements,
-#### because it takes a while to load.
+# Define the maximum number of improvements for low-scoring zones
+MAX_IMPROVEMENTS = 2
 
+#### PLEASE READ FIRST!
+#### Version 2.0
+## Originally, this was supposed to be a script to check for the current separation of
+## neighbourhoods in Eindhoven, and if they fit the classification of a 15-minute city,
+## so we could recognize districts that we could immediately reject. However, that's not
+## really necessary anymore, so instead this will use Fieke's definitions of a 15-minute
+## city, as based on the bounds extracted in definitionRefinement.py, and will try to
+## separate Eindhoven into 15-minute zones that way.
 
-# Configure criteria to roughly fit 15mC as defined by Carlos Moreno
-# (so access to amenities via 15 minute walk... + bike in our case)
-place = "Eindhoven, Netherlands"
+## Another thing to keep in mind are the properties for the building density, population
+## density, and service diversity. These are all based on a simulation provided in the other
+## script, and the values here are defined just to minimize running times, though running
+## with the simulated ones works fine just for checking which neighbourhoods are satisfactory.
+## OPTIMAL VALUES:
+## Population density: 8631 - 12400 people/km2
+## Building density: 0.6 - 0.8 built zone per total area
+## Service diversity: > 1.5  different services/km2 // Maximum extracted was around 20 services per km^2
+
+## This is a work in progress, but is almost done. The only thing that needs modifying now,
+## is the full loop; this simulation is unfortunately quite time-consuming, since the model
+## needs to run enough times until it stops finding "low" scoring zones.
+## By debugging with smaller walking radii, the code seems to function properly.
+
+# Speeds remain the same. Comments left for clarity.
+
+place_name = "Eindhoven, Netherlands"
 
 # According to the Journal of Applied Physiology, average walking speed falls 
 # between 4.0 - 5.9 km/h. Here, we use the lower bound, since the model is supposed
 # to be as inclusive as possible.
 average_walk_speed = 4
 
-# On Copenhagen's website it says that an elderly person averages a 10 km/h
-# cycling speed. For the same reason as stated above, we use this as our average.
-average_bike_speed = 10
-
 # It's a 15-minute city, so:
 time_min = 15
 
 walk_radius_m = average_walk_speed * 1000 / 60 * time_min    
-bike_radius_m = average_bike_speed * 1000 / 60 * time_min    
 
-
-# The "amenities" are lifted straight from the lsit of services I (Maciej) found during research 
-# for the first part of the assignment. OSMnx uses a pretty odd manner of defining "leisure," 
-# but in 
+# Tags remain the same as in original version, based on Moreno's definition; will be
+# updated if necessary, still subject to change.
 
 tags = {
     'office': ['yes'],  # All workplaces, since OSM has an incredible amount of identifiers.
@@ -59,137 +72,179 @@ tags = {
     # Not sure how many leisures to include, so included the "green" ones.
 }
 
-#  ---> Loading the walking/biking networks from OSMnx
-print('Loading networks')
+# tags = {
+#     'office': ['yes'],
+#     'shop': ['yes'],
+#     'amenity': ['yes'],
+#     'leisure': ['yes'],
+# }
 
-G_walk = ox.graph_from_place(place, network_type='walk')
-G_bike = ox.graph_from_place(place, network_type='bike')
-
-G_walk = ox.project_graph(G_walk)
-G_bike = ox.project_graph(G_bike)
-
-#  ---> Loading the amenities provided by tags
-print('Loading amenities.')
-
-gdf_amenities = ox.features_from_place(place, tags=tags)
-gdf_amenities = gdf_amenities.to_crs(ox.graph_to_gdfs(G_walk, nodes=True, edges=False).crs)
-
-# --> Set neighborhood boundaries.
-
-# IMPORTANT: From what I understand, admin_level describes the key of the feature within
-# the distribution hierarchy, alongside the boundary tag to define that we are using
-# an administrative boundary. This feature is different per Nation, and for the Netherlands,
-# admin_level = 10 will pertain to "woonplaatsen", so the non-autonomous municipal subdivisions,
-# such as Centrum, Strijp, and Woensel (which is perfect for the primary elimination we want to achieve.) 
-
-print('Loading boundaries.')
-
-admin_tags = {"boundary": "administrative", "admin_level": "10"}
-crs = G_walk.graph['crs']
-neighborhoods = ox.features_from_place(place, tags=admin_tags)
-neighborhoods = neighborhoods[neighborhoods.geometry.type.isin(['Polygon', 'MultiPolygon'])]
-neighborhoods = neighborhoods.to_crs(crs)
-
-# --> Perform rudimentary analysis.
-results = []
-
-# This analyzes access by walking/biking and compares the two as based on the entries in the
-# previous tags category. I'll admit I got stuck here, so the first part of this is Copiloted.
-
-def analyze_access(graph, center_node, radius_m, tags):
-    # Get subgraph (this returns a subgraph around the node within the radius.)
-    subgraph = nx.ego_graph(graph, center_node, radius=radius_m, distance='length')
-    nodes, _ = ox.graph_to_gdfs(subgraph)
-    isochrone_poly = nodes.geometry.unary_union.convex_hull
-    inside = gdf_amenities[gdf_amenities.geometry.within(isochrone_poly)]
-
-    # Set to hold categories that are covered by the 15-minute walk/bike zone
-    categories_covered = set()
-
-    # Check for matching amenities based on tags
-    for k, v_list in tags.items():
-        for v in v_list:
-            match = inside[inside[k] == v]
-            if not match.empty:
-                categories_covered.add((k, v))
-    return categories_covered
-
-for idx, row in neighborhoods.iterrows():
-    name = row.get('name', f"Neighborhood {idx}")
-    centroid = row.geometry.centroid
-
-    try:
-        node_walk = ox.distance.nearest_nodes(G_walk, centroid.x, centroid.y)
-        node_bike = ox.distance.nearest_nodes(G_bike, centroid.x, centroid.y)
-    except:
-        continue  # Skip invalid geometry
-
-
-    walk_access = analyze_access(G_walk, node_walk, walk_radius_m, tags)
-    try:
-         bike_access = analyze_access(G_bike, node_bike, bike_radius_m, tags)
-    except ValueError as e:
-        print(f"Skipping bike access analysis: {e}")
-        bike_access = set()  
-        
-    # To compare using a geodataframe, we create a dataset for each neighborhood from
-    # the measurements we have defined.
-    results.append({
-        'name': name,
-        'walk_score': len(walk_access),
-        'bike_score': len(bike_access),
-        'improvement': len(bike_access) - len(walk_access),
-        'walk_amenities': walk_access,
-        'bike_amenities': bike_access,
-        'geometry': row.geometry
-    })
+# I still need to extract the specific property bounds from the definitionRefinement.py script,
+# and compare them to some research papers to check the research's validity. For now, I will 
+# just use some generalized values that I got from asking Copilot - thanks, Copilot. 
     
+# Population density is measured here using people per km2.
+POP_DENSITY_MIN = 4000
+POP_DENSITY_MAX = 10000
+# Building density is meaured here using percentage of built area to total area.
+BUILDING_DENSITY_MIN = 0.3
+BUILDING_DENSITY_MAX = 0.7
+# Service diversity is measured here using the number of different services per km2 using
+# Shannon entropy. Apparently the standard. I have no idea.
+SERVICE_DIVERSITY_MIN = 1.5
 
-print("Top neighborhoods by 15mC classification:")
+# Big change: Eindhoven's admin levels are not there in OSM, only the adminsitrative boundaries
+# for Noord-Brabant, and so it's impossible to use the admin_level to extract the city. Instead,
+# I use the geopackage provided by the Central Bureau voor de Statistiek (CBS.)
 
-# --> Results:
+# First, we will extract the city + buurten boundaries from the geopackage, and plot these.
+buurten = gpd.read_file("wijkenbuurten_2023_v2.gpkg", layer="wijken")
+eindhoven_buurten = buurten[buurten["gemeentenaam"] == "Eindhoven"]
+eindhoven_buurten = eindhoven_buurten.to_crs(epsg=3857)  # for distance in meters
 
-results_sorted = sorted(results, key=lambda x: -x['improvement'])
+eindhoven_buurten["centroid"] = eindhoven_buurten.geometry.centroid
 
-print("Top neighborhoods by 15mC classification:")
-results_sorted = sorted(results, key=lambda x: -x['improvement'])
+fig, ax = plt.subplots(figsize=(10, 10))
+eindhoven_buurten.plot(edgecolor='black', column='wijknaam', cmap='tab20')
+# plt.show()
 
-for r in results_sorted[:10]:
-    print(f"Neighborhood: {r['name']} | Walk Score: {r['walk_score']} → Bike Score: {r['bike_score']} | Improvement: +{r['improvement']}")
+# This gives us a nice overview of the neighbourhoods in Eindhoven, which we can later use 
+# for basing our 15-minute walkability inquiry. We will be modifying these in accordance with
+# the properties (POP_DENSITY, BUILDING_DENSITY, SERVICE_DIVERSITY) to check which neighbourhoods
+# satisfy the properties, and then modify their boundaries accordingly.
 
-gdf_results = gpd.GeoDataFrame(results, crs=neighborhoods.crs)
+G = ox.graph_from_place(place_name, network_type="walk", simplify=True)
 
+# This is awfully smart - an EGO GRAPH is one that centers around some node - we will define this
+# ego node to be the node located at the centroid of the neighbourhood. The ego graph will then be a subgraph
+# of the original graph, containing all nodes within the specified radius.
 
-# Tried making a folium map: so far, just failure.
-# min_improve = min(r['improvement'] for r in results)
-# max_improve = max(r['improvement'] for r in results)
-# colormap = cmap.LinearColormap(colors=['red', 'orange', 'yellow', 'green'],
-#                              vmin=min_improve, vmax=max_improve,
-#                              caption='Improvement (Bike - Walk)')
+def make_isochrone(point, G, walk_dist = 1200):
+    node = ox.nearest_nodes(G, point.x, point.y)    
+    subgraph = nx.ego_graph(G, node, radius=walk_dist, distance='length')
+    # Polygon from subgraph nodes
+    nodes = [G.nodes[n] for n in subgraph.nodes]
+    points = [Point(data['x'], data['y']) for data in nodes]
+    polygon = gpd.GeoSeries(points).union_all().convex_hull
+    return polygon
 
-# # Assign a color to each neighborhood based on improvement
-# gdf_results['color'] = gdf_results['improvement'].apply(colormap)
+# A beautiful solution suggested by Stackexchange: parallelization of isochrone generation saves
+# minutes of running time.
+def generate_isochrone(row):
+    return make_isochrone(row.centroid, G)
 
-# # Create the Folium map
-# center = neighborhoods.unary_union.centroid
-# m = folium.Map(location=[center.y, center.x], zoom_start=12)
+with ThreadPoolExecutor() as executor:
+    isochrones = list(executor.map(generate_isochrone, eindhoven_buurten.itertuples()))
+eindhoven_buurten["isochrone_15min"] = isochrones
 
-# ## Coloring the neighborhoods.
-# for _, row in gdf_results.iterrows():
-#     folium.GeoJson(
-#         row['geometry'],
-#         style_function=lambda feature, color=row['color']: {
-#             'fillColor': color,
-#             'color': 'black',
-#             'weight': 1,
-#             'fillOpacity': 0.6,
-#         },
-#         tooltip=folium.Tooltip(f"{row['name']}: +{row['improvement']} improvement"),
-#     ).add_to(m)
+# Let's define points of interest as specific buurtens of Eindhoven for further analysis.
+POIS = ox.features_from_place(place_name, tags)
+POIS = POIS.to_crs(eindhoven_buurten.crs)
 
-# # Add color scale to the map
-# colormap.add_to(m)
+# Method for classifying different types of services; need it so that later when defining 
+# "scoring" for the services we can do it based on the type of service.
+def classify_service(row):
+    return row.get('amenity') or row.get('shop') or row.get('leisure') or row.get('office')
 
+POIS["service_type"] = POIS.apply(classify_service, axis=1)
+pois = POIS[~POIS["service_type"].isna()]
 
-# m.save('eindhoven_15min_city_map.html')
-# m
+# The two methods below are very simple, just needed so that we can check whether or not Fieke's
+# criteria are satisfied by the newly proposed designations.
+
+def count_services(polygon, pois):
+    return pois[pois.geometry.intersects(polygon)]
+
+def shannon_diversity(services):
+    counts = services["service_type"].value_counts()
+    proportions = counts / counts.sum()
+    return -(proportions * np.log(proportions)).sum()
+
+# This is the main scoring loop, where we check the properties of each neighbourhood
+# and assign a score based on the properties. The scoring is done based on the properties
+# defined above, and how well each defined isochrone fits their boundaries.
+
+results = []
+for _, row in eindhoven_buurten.iterrows():
+    poly = row["isochrone_15min"]
+    services = count_services(poly, pois)
+    service_diversity = shannon_diversity(services) if len(services) > 0 else 0
+    pop_density = row["omgevingsadressendichtheid"]
+    building_density = np.random.uniform(0.2, 0.8)  # Placeholder
+
+    passed = {
+        "population": POP_DENSITY_MIN <= pop_density <= POP_DENSITY_MAX,
+        "building": BUILDING_DENSITY_MIN <= building_density <= BUILDING_DENSITY_MAX,
+        "diversity": service_diversity >= SERVICE_DIVERSITY_MIN,
+    }
+
+    if all(passed.values()):
+        score = "high"
+    elif any(passed.values()):
+        score = "medium"
+    else:
+        score = "low"
+
+    results.append({
+        "service_count": len(services),
+        "service_diversity": service_diversity,
+        "building_density": building_density,
+        "score": score
+    })
+
+results_df = pd.DataFrame(results)
+eindhoven_buurten = pd.concat([eindhoven_buurten.reset_index(drop=True), results_df], axis=1)
+
+# Expand the zones that scored "low" to see if we can improve their scores by expanding the isochrone. 
+# Note that this only improves them  MAX_IMPROVEMENTS iterations.
+def try_expand(row, G, pois, walk_dist=1800, max_improvements=MAX_IMPROVEMENTS):
+    if row["score"] != "low":
+        return row["isochrone_15min"], row["score"]
+
+    polygon = row["isochrone_15min"]
+    score = "low"
+
+    for _ in range(max_improvements):
+        node = ox.nearest_nodes(G, row["centroid"].x, row["centroid"].y)
+        subgraph = nx.ego_graph(G, node, radius=walk_dist, distance='length')
+        nodes = [G.nodes[n] for n in subgraph.nodes]
+        points = [Point(data['x'], data['y']) for data in nodes]
+        polygon = gpd.GeoSeries(points).union_all().convex_hull
+        services = count_services(polygon, pois)
+        service_diversity = shannon_diversity(services) if len(services) > 0 else 0
+        pop_density = row["omgevingsadressendichtheid"]
+        building_density = np.random.uniform(0.2, 0.8)
+
+        if (
+            POP_DENSITY_MIN <= pop_density <= POP_DENSITY_MAX and
+            BUILDING_DENSITY_MIN <= building_density <= BUILDING_DENSITY_MAX and
+            service_diversity >= SERVICE_DIVERSITY_MIN
+        ):
+            score = "upgraded"
+            break
+
+    return polygon, score
+
+expanded = eindhoven_buurten.apply(lambda row: try_expand(row, G, pois), axis=1)
+eindhoven_buurten["final_isochrone"] = expanded.apply(lambda x: x[0])
+eindhoven_buurten["final_score"] = expanded.apply(lambda x: x[1])
+
+# --- Plotting to Folium ---
+m = folium.Map(location=[51.44, 5.48], zoom_start=12, tiles="cartodbpositron")
+color_map = {"high": "green", "medium": "orange", "low": "red", "upgraded": "blue"}
+
+for _, row in eindhoven_buurten.iterrows():
+    if not row["final_isochrone"].is_empty:
+        folium.GeoJson(
+            mapping(row["final_isochrone"]),
+            style_function=lambda feature, color=color_map[row["final_score"]]: {
+                "fillColor": color,
+                "color": color,
+                "weight": 1,
+                "fillOpacity": 0.4,
+            },
+            tooltip=f"{row['wijknaam']} ({row['final_score']})"
+        ).add_to(m)
+
+m.save("eindhoven_final_15min_map.html")
+m
