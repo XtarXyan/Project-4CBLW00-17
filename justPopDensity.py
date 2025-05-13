@@ -9,16 +9,11 @@ from shapely.geometry import Point, mapping
 from shapely.ops import unary_union
 from concurrent.futures import ThreadPoolExecutor
 
-# Enable caching for OSM queries
+# Enable caching for OSM queries: we need this so that pulling data does not lead to a timeout.
 ox.settings.use_cache = True
 ox.settings.timeout = 600  # Set timeout to 300 seconds
 ox.settings.overpass_endpoint = "https://overpass.kumi.systems/api/"
 
-# Define the maximum number of improvements for low-scoring zones
-MAX_IMPROVEMENTS = 2
-
-#### WARNING: BUILDING DENSITY CANNOT BE FETCHED: 
-#### NEITHER OSMNX OR THE CBS GEOPACKAGE CONTAIN THIS DATA.
 
 #### PLEASE READ FIRST!
 #### Version 2.0
@@ -28,6 +23,10 @@ MAX_IMPROVEMENTS = 2
 ## really necessary anymore, so instead this will use Fieke's definitions of a 15-minute
 ## city, as based on the bounds extracted in definitionRefinement.py, and will try to
 ## separate Eindhoven into 15-minute zones that way.
+
+### NOTE ABOUT THIS ONE
+## THIS VERSION ONLY USES POPULATION DENSITY, AND CONTAINS A LOT OF DEBUGGING COMMENTS.
+## This is because building density is almost impossible to acquire for some reason.
 
 ## Another thing to keep in mind are the properties for the building density, population
 ## density, and service diversity. These are all based on a simulation provided in the other
@@ -93,16 +92,8 @@ tags = {
 # just use some generalized values that I got from asking Copilot - thanks, Copilot. 
     
 # Population density is measured here using people per km2.
-POP_DENSITY_MIN = 2000
-POP_DENSITY_MAX = 100000
-
-# Building density is meaured here using percentage of built area to total area.
-BUILDING_DENSITY_MIN = 0.5
-BUILDING_DENSITY_MAX = 0.8
-
-# Service diversity is measured here using the number of different services per km2 using
-# Shannon entropy. Apparently the standard. I have no idea.
-SERVICE_DIVERSITY_MIN = 1.5
+POP_DENSITY_MIN = 3500
+POP_DENSITY_MAX = 8000
 
 # Big change: Eindhoven's admin levels are not there in OSM, only the adminsitrative boundaries
 # for Noord-Brabant, and so it's impossible to use the admin_level to extract the city. Instead,
@@ -114,13 +105,8 @@ eindhoven_buurten = buurten[buurten["gemeentenaam"] == "Eindhoven"]
 eindhoven_buurten = eindhoven_buurten.to_crs(epsg=3857)  # for distance in meters
 eindhoven_buurten["centroid"] = eindhoven_buurten.geometry.centroid
 
-# Ensure the geometry has a valid CRS
-if eindhoven_buurten.crs is None:
-    eindhoven_buurten = eindhoven_buurten.set_crs(epsg=3857)  # Set to EPSG:3857 if missing
-
 fig, ax = plt.subplots(figsize=(10, 10))
 eindhoven_buurten.plot(edgecolor='black', column='wijknaam', cmap='tab20')
-plt.show()
 
 # This gives us a nice overview of the neighbourhoods in Eindhoven, which we can later use 
 # for basing our 15-minute walkability inquiry. We will be modifying these in accordance with
@@ -136,10 +122,9 @@ G = ox.graph_from_place(place_name, network_type="walk", simplify=True)
 def make_isochrone(point, G, walk_dist = walk_radius_m):
     node = ox.nearest_nodes(G, point.x, point.y)    
     subgraph = nx.ego_graph(G, node, radius=walk_dist, distance='length')
-    # Polygon from subgraph nodes
     nodes = [G.nodes[n] for n in subgraph.nodes]
     points = [Point(data['x'], data['y']) for data in nodes]
-    polygon = gpd.GeoSeries(points).union_all().convex_hull
+    polygon = gpd.GeoSeries(points).unary_union.convex_hull
     return polygon
 
 # # A beautiful solution suggested by Stackexchange: parallelization of isochrone generation saves
@@ -159,78 +144,6 @@ POIS = POIS.to_crs(eindhoven_buurten.crs)
 def classify_service(row):
     return row.get('amenity') or row.get('shop') or row.get('leisure') or row.get('office')
 
-def count_services(polygon, pois):
-    return pois[pois.geometry.intersects(polygon)]
-
-def shannon_diversity(services):
-    counts = services["service_type"].value_counts()
-    proportions = counts / counts.sum()
-    return -(proportions * np.log(proportions)).sum()
-
-def calculate_service_diversity(polygon):
-    try:
-        services = pois[pois.geometry.intersects(polygon)]
-        print(services.head())
-        if services.empty:
-            return 0.0
-        counts = services["service_type"].value_counts()
-        proportions = counts / counts.sum()
-        return -(proportions * np.log(proportions)).sum()
-    except Exception as e:
-        print(f"[Error] Service diversity: {e}")
-        return 0.0
-
-
-# Need to get building density from OSMNx, since it's not present in the geopackage
-# provided by the CBS.  
-
-# Replace unary_union with union_all
-combined_geometry = eindhoven_buurten.geometry.union_all()
-
-# Wrap the combined geometry in a GeoSeries
-combined_geometry_gs = gpd.GeoSeries([combined_geometry], crs=eindhoven_buurten.crs)
-
-# Reproject to WGS84 (EPSG:4326) for Overpass API
-combined_geometry_wgs84 = combined_geometry_gs.to_crs(epsg=4326).iloc[0]
-
-# Query buildings using the reprojected geometry
-try:
-    buildings = ox.features_from_polygon(
-        combined_geometry_wgs84,  # Use the reprojected geometry
-        tags={"building": True}
-    )
-    if buildings.empty:
-        print("No buildings found in the queried area.")
-    else:
-        buildings = buildings.to_crs(eindhoven_buurten.crs)  # Reproject back to the original CRS
-except Exception as e:
-    print(f"Error querying buildings: {e}")
-    buildings = gpd.GeoDataFrame()  # Create an empty GeoDataFrame to avoid further errors
-
-
-def calculate_building_density(polygon, buildings_gdf):
-    try:
-        if buildings_gdf.empty:
-            print("[Warning] No buildings data available for density calculation.")
-            return 0.0
-
-        polygon = gpd.GeoDataFrame(geometry=[polygon], crs=buildings_gdf.crs)
-        polygon = polygon.set_geometry(polygon.geometry.buffer(0))  # Fix invalid geometries
-
-        buildings_within = buildings_gdf[buildings_gdf.geometry.intersects(polygon.geometry.iloc[0])]
-        if buildings_within.empty:
-            return 0.0
-
-        clipped = gpd.overlay(buildings_within, polygon, how='intersection')
-
-        building_area = clipped.geometry.area.sum()
-        poly_area = polygon.geometry.area.iloc[0]
-        return building_area / poly_area if poly_area > 0 else 0.0
-
-    except Exception as e:
-        print(f"[Error] Building density: {e}")
-        return 0.0
-
 
 POIS["service_type"] = POIS.apply(classify_service, axis=1)
 pois = POIS[~POIS["service_type"].isna()]
@@ -242,14 +155,10 @@ pois = POIS[~POIS["service_type"].isna()]
 results = []
 for _, row in eindhoven_buurten.iterrows():
     poly = row["isochrone_15min"]
-    service_diversity = calculate_service_diversity(poly)
     pop_density = row["omgevingsadressendichtheid"]
-    building_density = calculate_building_density(poly, buildings)
 
     passed = {
         "population": POP_DENSITY_MIN <= pop_density <= POP_DENSITY_MAX,
-        "building": BUILDING_DENSITY_MIN <= building_density <= BUILDING_DENSITY_MAX,
-        "diversity": service_diversity >= SERVICE_DIVERSITY_MIN,
     }
 
     if all(passed.values()):
@@ -262,17 +171,17 @@ for _, row in eindhoven_buurten.iterrows():
         "geometry": row["geometry"],
         "isochrone": poly,
         "score": score,
-        "service_count": service_diversity,
-        "service_diversity": service_diversity,
         "pop_density": pop_density,
-        "building_density": building_density,
     })
+
 
 results_df = pd.DataFrame(results)
 print("Initial Results:")
-print(results_df[["wijknaam", "score", "pop_density", "building_density", "service_diversity"]])
+print(results_df[["wijknaam", "score", "pop_density"]])
 
 # First check: Display neighborhoods based on initial satisfaction of properties
+results_df = gpd.GeoDataFrame(results_df, geometry="geometry", crs=eindhoven_buurten.crs)
+results_df = results_df.to_crs(epsg=4326)
 initial_map = folium.Map(location=[51.44, 5.48], zoom_start=12, tiles="cartodbpositron")
 
 for _, row in results_df.iterrows():
@@ -297,39 +206,28 @@ print("Initial map saved as eindhoven_initial_check_map.html")
 # Expand the zones that scored "low" to see if we can improve their scores by expanding the isochrone. 
 # Note that this only tries for NEIGHBOURING zones.
 def merge_neighborhoods(failing_neighborhoods, passing_neighborhoods):
-    # Ensure both are GeoDataFrames
     failing_neighborhoods = gpd.GeoDataFrame(failing_neighborhoods, geometry="geometry", crs=eindhoven_buurten.crs)
     passing_neighborhoods = gpd.GeoDataFrame(passing_neighborhoods, geometry="geometry", crs=eindhoven_buurten.crs)
 
     merged_results = []
     for fail in failing_neighborhoods.itertuples():
-        # Find neighbors that touch the failing neighborhood
         neighbors = passing_neighborhoods[passing_neighborhoods.geometry.touches(fail.geometry)]
         merged = False
         for _, neighbor in neighbors.iterrows():
-            # Merge geometries and isochrones
             merged_geometry = gpd.GeoSeries([fail.geometry, neighbor.geometry]).union_all()
             merged_isochrone = gpd.GeoSeries([fail.isochrone, neighbor.isochrone]).union_all()
-            services = count_services(merged_isochrone, pois)
-            service_diversity = shannon_diversity(services) if len(services) > 0 else 0
             pop_density = (fail.pop_density + neighbor.pop_density) / 2
-            building_density = (fail.building_density + neighbor.building_density) / 2
 
-            # Check if the merged neighborhood passes the criteria
             if (
-                POP_DENSITY_MIN <= pop_density <= POP_DENSITY_MAX and
-                BUILDING_DENSITY_MIN <= building_density <= BUILDING_DENSITY_MAX and
-                service_diversity >= SERVICE_DIVERSITY_MIN
+                POP_DENSITY_MIN <= pop_density <= POP_DENSITY_MAX
             ):
                 merged_results.append({
                     "wijknaam": f"{fail.wijknaam} + {neighbor.wijknaam}",
                     "geometry": merged_geometry,
                     "isochrone": merged_isochrone,
                     "score": "pass",
-                    "service_count": len(services),
-                    "service_diversity": service_diversity,
                     "pop_density": pop_density,
-                    "building_density": building_density,
+                    # "building_density": ...,  # removed
                 })
                 merged = True
                 break
@@ -341,9 +239,33 @@ failing_neighborhoods = results_df[results_df["score"] == "fail"]
 passing_neighborhoods = results_df[results_df["score"] == "pass"]
 merged_results = merge_neighborhoods(failing_neighborhoods, passing_neighborhoods)
 
+# Ensure final_results is a GeoDataFrame
 final_results = pd.concat([results_df[results_df["score"] == "pass"], merged_results])
+final_results = gpd.GeoDataFrame(final_results, geometry="geometry", crs=eindhoven_buurten.crs)
 
-# This plots the final map, hopefully this time it actually works.
+# Debug: Check CRS and geometries
+print(f"CRS of final_results before reprojecting: {final_results.crs}")
+print(f"Number of empty geometries: {final_results.geometry.is_empty.sum()}")
+print(f"Number of invalid geometries: {final_results.geometry.is_valid.sum()}")
+
+# Fix invalid geometries
+final_results["geometry"] = final_results.geometry.buffer(0)
+
+# Drop rows with empty geometries
+final_results = final_results[~final_results.geometry.is_empty]
+print(final_results.geometry)
+
+# Ensure CRS is set
+if final_results.crs is None:
+    final_results = final_results.set_crs(eindhoven_buurten.crs)
+
+# Reproject to WGS84 (EPSG:4326)
+final_results = final_results.to_crs(epsg=4326)
+
+# Debug: Check the number of neighborhoods to plot
+print(f"Number of neighborhoods to plot: {len(final_results)}")
+
+# Plot the final map
 m = folium.Map(location=[51.44, 5.48], zoom_start=12, tiles="cartodbpositron")
 for _, row in final_results.iterrows():
     folium.GeoJson(
@@ -358,3 +280,4 @@ for _, row in final_results.iterrows():
     ).add_to(m)
 
 m.save("eindhoven_final_15min_map.html")
+print("Final map saved as eindhoven_final_15min_map.html")
