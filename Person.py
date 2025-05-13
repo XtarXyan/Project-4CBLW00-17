@@ -10,16 +10,17 @@ import random
 # The total travel time for the day is calculated and returned.
 # Thanks Copilot for writing my comments
 
-class Person:
+class person:
     def __init__(self, residence_coords, work_coords=None, walk_speed=4, bike_speed=10, bike_freq=0.0, work_freq=1.0, amenity_freqs=None, curiosity=1.0, seed=0):
         self.residence_coords = residence_coords  # This should be a tuple (latitude, longitude)
         self.work_coords = work_coords
         self.work_freq = work_freq  # Frequency of going to work (1.0 means every day)
         self.walk_speed = walk_speed  
-        self.bike_speed = bike_speed  
+        self.bike_speed = bike_speed
         self.bike_freq = bike_freq # Frequency of biking (0.0 means never, 1.0 means always)
         self.amenity_freqs = amenity_freqs # Dictionary of amenity types and their frequencies (0.0 to 1.0)
         self.curiosity = curiosity # Chance the agent will (recursively) pick the nearest amenity of a certain type over the following nearest one.
+        self.work_travel_time = 0
         random.seed(seed)
         self.initialize_distances()
 
@@ -74,9 +75,9 @@ class Person:
         for amenity_type in self.amenity_freqs.keys():
             # Each entry is a list of distances to the nearest amenities of that type
             self.distances_r_amenity_walk[amenity_type] = dists.get_nearest_amenities(
-                G_walk, self.residence_coords, amenity_type, self.amenity_freqs[amenity_type]) 
+                G_walk, self.residence_coords, amenity_type, 10) 
             self.distances_r_amenity_bike[amenity_type] = dists.get_nearest_amenities(
-                G_bike, self.residence_coords, amenity_type, self.amenity_freqs[amenity_type])
+                G_bike, self.residence_coords, amenity_type, 10)
             
         # Initialize distances for work amenities
         if self.work_coords:
@@ -88,9 +89,9 @@ class Person:
             # This is done to simulate the agent's behavior of going to work and then visiting an amenity on the way home.
             for amenity_type in self.amenity_freqs.keys():
                 self.distances_w_amenity_walk[amenity_type] = dists.get_nearest_amenities_inbetween(
-                    G_walk, self.work_coords, self.residence_coords, amenity_type, self.amenity_freqs[amenity_type])
+                    G_walk, self.work_coords, self.residence_coords, amenity_type, 10)
                 self.distances_w_amenity_bike[amenity_type] = dists.get_nearest_amenities_inbetween(
-                    G_bike, self.work_coords, self.residence_coords, amenity_type, self.amenity_freqs[amenity_type])
+                    G_bike, self.work_coords, self.residence_coords, amenity_type, 10)
         else:
             self.distances_w_amenity_walk = None
             self.distances_w_amenity_bike = None
@@ -117,10 +118,10 @@ class Person:
         if random.random() < self.work_freq:
             # Travel to work
             if self.work_coords:
-                travel_time = self.travel_time(self.distance_rw_walk if travel_mode == 'walk' else self.distance_rw_bike, mode=travel_mode)
-                total_travel_time += travel_time
+                self.work_travel_time = self.travel_time(self.distance_rw_walk if travel_mode == 'walk' else self.distance_rw_bike, mode=travel_mode)
+                total_travel_time += self.work_travel_time
                 is_at_work = True
-                print(f"Travel time to work: {travel_time} minutes")
+                print(f"Travel time to work: {self.work_travel_time} minutes")
             else:
                 print("No work location specified.")
         
