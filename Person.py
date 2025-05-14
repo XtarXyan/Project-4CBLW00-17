@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-import eindhovenDists as dists
+import eindhovenDistsBallTree as dists
+import geopandas as gpd
 import random
+
 
 # Agent class simulates the behavior of an agent in a city.
 # The agent has a residence and work location, and can travel to amenities based on their preferences and travel modes.
@@ -18,7 +20,7 @@ class person:
         self.walk_speed = walk_speed  
         self.bike_speed = bike_speed
         self.bike_freq = bike_freq # Frequency of biking (0.0 means never, 1.0 means always)
-        self.amenity_freqs = amenity_freqs # Dictionary of amenity types and their frequencies (0.0 to 1.0)
+        self.amenity_freqs = amenity_freqs # Dictionary of amenity type lists and their frequencies (0.0 to 1.0)
         self.curiosity = curiosity # Chance the agent will (recursively) pick the nearest amenity of a certain type over the following nearest one.
         self.work_travel_time = 0
         random.seed(seed)
@@ -65,33 +67,41 @@ class person:
         print(self.distance_rw_bike)
 
         # Initialize distances for amenities
-        
         self.distances_r_amenity_walk = {}
         self.distances_r_amenity_bike = {}
         
         if self.amenity_freqs is None:
             return
 
-        for amenity_type in self.amenity_freqs.keys():
-            # Each entry is a list of distances to the nearest amenities of that type
-            self.distances_r_amenity_walk[amenity_type] = dists.get_nearest_amenities(
-                G_walk, self.residence_coords, amenity_type, 10) 
-            self.distances_r_amenity_bike[amenity_type] = dists.get_nearest_amenities(
-                G_bike, self.residence_coords, amenity_type, 10)
+        # Get distances to the nearest amenities of that type (can be multiple) from residence location sorted by
+        # how much distance they are from residence to the amenity and back to work.
+        for amenity_list in self.amenity_freqs.keys():
+            # Each entry is a list of distances to the nearest amenities in that list
+            self.distances_r_amenity_walk[amenity_list] = dists.get_nearest_amenities(
+                G_walk, self.residence_coords, amenity_list, 10
+            )["distance"].to_list()
+
+            self.distances_r_amenity_bike[amenity_list] = dists.get_nearest_amenities(
+                G_bike, self.residence_coords, amenity_list, 10
+            )["distance"].to_list()
+                
             
         # Initialize distances for work amenities
         if self.work_coords:
             self.distances_w_amenity_walk = {}
             self.distances_w_amenity_bike = {}
             
-            # Get distances to the nearest amenities of that type from work location sorted by
+            # Get distances to the nearest amenities in each list from work location sorted by
             # how much distance they are from work to the amenity and back to residence.
             # This is done to simulate the agent's behavior of going to work and then visiting an amenity on the way home.
-            for amenity_type in self.amenity_freqs.keys():
-                self.distances_w_amenity_walk[amenity_type] = dists.get_nearest_amenities_inbetween(
-                    G_walk, self.work_coords, self.residence_coords, amenity_type, 10)
-                self.distances_w_amenity_bike[amenity_type] = dists.get_nearest_amenities_inbetween(
-                    G_bike, self.work_coords, self.residence_coords, amenity_type, 10)
+            for amenity_list in self.amenity_freqs.keys():
+                self.distances_w_amenity_walk[amenity_list] = dists.get_nearest_amenities_inbetween(
+                    G_walk, self.work_coords, self.residence_coords, amenity_list, 10
+                )["distance"].to_list()
+                self.distances_w_amenity_bike[amenity_list] = dists.get_nearest_amenities_inbetween(
+                    G_bike, self.work_coords, self.residence_coords, amenity_list, 10
+                )["distance"].to_list()
+                
         else:
             self.distances_w_amenity_walk = None
             self.distances_w_amenity_bike = None

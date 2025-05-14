@@ -7,7 +7,7 @@ place = 'Eindhoven, Netherlands'
 print('Loading networks v3')
 
 # G_walk = ox.graph_from_place(place, network_type='walk')
-G_bike = ox.graph_from_place(place, network_type='bike')
+G_bike = ox.graph_from_place(place, network_type='drive')
 G_walk = G_bike.copy() # Cut loading time in half with this one simple trick
 
 G_walk = ox.add_edge_speeds(G_walk)
