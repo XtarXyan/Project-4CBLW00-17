@@ -33,7 +33,10 @@ ox.settings.overpass_endpoint = "https://overpass.kumi.systems/api/"
 ## script, and the values here are defined just to minimize running times, though running
 ## with the simulated ones works fine just for checking which neighbourhoods are satisfactory.
 ## OPTIMAL VALUES:
-## Population density: 8631 - 12400 people/km2
+## Population density for large city: 8631 - 12400 people/km2
+## Standardized for a smaller size like Eindhoven: [10000-14400]*0.161 = [1610 - 2318] 
+## --> Higher bound moved to include larger inner density to ~ 4632
+## Standardized for intermediate city size: 3500 - 8000 people/km2
 ## Building density: 0.6 - 0.8 built zone per total area
 ## Service diversity: > 1.5  different services/km2 // Maximum extracted was around 20 services per km^2
 
@@ -92,8 +95,8 @@ tags = {
 # just use some generalized values that I got from asking Copilot - thanks, Copilot. 
     
 # Population density is measured here using people per km2.
-POP_DENSITY_MIN = 3500
-POP_DENSITY_MAX = 8000
+POP_DENSITY_MIN = 1600
+POP_DENSITY_MAX = 4632
 
 # Big change: Eindhoven's admin levels are not there in OSM, only the adminsitrative boundaries
 # for Noord-Brabant, and so it's impossible to use the admin_level to extract the city. Instead,
@@ -185,16 +188,23 @@ results_df = results_df.to_crs(epsg=4326)
 initial_map = folium.Map(location=[51.44, 5.48], zoom_start=12, tiles="cartodbpositron")
 
 for _, row in results_df.iterrows():
-    folium.GeoJson(
-        mapping(row["geometry"]),
+    # Add the "score" property to the GeoJSON feature
+    geojson = folium.GeoJson(
+        data={
+            "type": "Feature",
+            "geometry": mapping(row["geometry"]),
+            "properties": {"score": row["score"]},  # Explicitly add the "score" property
+        },
         style_function=lambda feature: {
-            "fillColor": "green" if row["score"] == "pass" else "red",
+            "fillColor": "green" if feature["properties"]["score"] == "pass" else "red",
             "color": "black",
             "weight": 1,
-            "fillOpacity": 0.4,
+            "fillOpacity": 0.5,
         },
         tooltip=f"{row['wijknaam']} ({row['score']})"
-    ).add_to(initial_map)
+    )
+    geojson.add_child(folium.Popup(f'Score: {row["score"]}'))
+    geojson.add_to(initial_map)
 
 # Save the initial map
 initial_map.save("eindhoven_initial_check_map.html")
@@ -216,8 +226,13 @@ def merge_neighborhoods(failing_neighborhoods, passing_neighborhoods):
         for _, neighbor in neighbors.iterrows():
             merged_geometry = gpd.GeoSeries([fail.geometry, neighbor.geometry]).union_all()
             merged_isochrone = gpd.GeoSeries([fail.isochrone, neighbor.isochrone]).union_all()
-            pop_density = (fail.pop_density + neighbor.pop_density) / 2
-
+            # Placeholder value, not used in final merging calculation.
+            # pop_density = (fail.pop_density + neighbor.pop_density) / 2
+            
+            # Calculate actual population density based on area of merged geometry
+            new_merged_area = merged_geometry.area
+            new_population = (fail.pop_density * fail.geometry.area) + (neighbor.pop_density * neighbor.geometry.area)
+            pop_density = new_population / new_merged_area if new_merged_area > 0 else 0
             if (
                 POP_DENSITY_MIN <= pop_density <= POP_DENSITY_MAX
             ):
@@ -227,8 +242,8 @@ def merge_neighborhoods(failing_neighborhoods, passing_neighborhoods):
                     "isochrone": merged_isochrone,
                     "score": "pass",
                     "pop_density": pop_density,
-                    # "building_density": ...,  # removed
                 })
+                print(f"Successfuly merged neighbourhoods {fail.wijknaam} and {neighbor.wijknaam}")
                 merged = True
                 break
         if not merged:
@@ -265,19 +280,26 @@ final_results = final_results.to_crs(epsg=4326)
 # Debug: Check the number of neighborhoods to plot
 print(f"Number of neighborhoods to plot: {len(final_results)}")
 
-# Plot the final map
-m = folium.Map(location=[51.44, 5.48], zoom_start=12, tiles="cartodbpositron")
-for _, row in final_results.iterrows():
-    folium.GeoJson(
-        mapping(row["geometry"]),
-        style_function=lambda feature: {
-            "fillColor": "green" if row["score"] == "pass" else "red",
-            "color": "black",
-            "weight": 1,
-            "fillOpacity": 0.4,
-        },
-        tooltip=f"{row['wijknaam']} ({row['score']})"
-    ).add_to(m)
+# Debugging/Temporary solution: instead of trying to map this onto a folium map,
+# I created a matplotlib visualization of the neighbourhoods we may consider as
+# passing the tests.
 
-m.save("eindhoven_final_15min_map.html")
-print("Final map saved as eindhoven_final_15min_map.html")
+
+
+
+# # Plot the final map
+# m = folium.Map(location=[51.44, 5.48], zoom_start=12, tiles="cartodbpositron")
+# for _, row in final_results.iterrows():
+#     folium.GeoJson(
+#         mapping(row["geometry"]),
+#         style_function=lambda feature: {
+#             "fillColor": "green" if row["score"] == "pass" else "red",
+#             "color": "black",
+#             "weight": 1,
+#             "fillOpacity": 0.4,
+#         },
+#         tooltip=f"{row['wijknaam']} ({row['score']})"
+#     ).add_to(m)
+
+# m.save("eindhoven_final_15min_map.html")
+# print("Final map saved as eindhoven_final_15min_map.html")
