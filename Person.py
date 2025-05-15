@@ -75,6 +75,7 @@ class person:
 
         # Get distances to the nearest amenities of that type (can be multiple) from residence location sorted by
         # how much distance they are from residence to the amenity and back to work.
+        print("Initializing distances for amenities...")
         for amenity_list in self.amenity_freqs.keys():
             # Each entry is a list of distances to the nearest amenities in that list
             self.distances_r_amenity_walk[amenity_list] = dists.get_nearest_amenities(
@@ -85,7 +86,7 @@ class person:
                 G_bike, self.residence_coords, amenity_list, 10
             )["distance"].to_list()
                 
-            
+        print("Initializing work distances for amenities...")
         # Initialize distances for work amenities
         if self.work_coords:
             self.distances_w_amenity_walk = {}
@@ -95,12 +96,10 @@ class person:
             # how much distance they are from work to the amenity and back to residence.
             # This is done to simulate the agent's behavior of going to work and then visiting an amenity on the way home.
             for amenity_list in self.amenity_freqs.keys():
-                self.distances_w_amenity_walk[amenity_list] = dists.get_nearest_amenities_inbetween(
-                    G_walk, self.work_coords, self.residence_coords, amenity_list, 10
-                )["distance"].to_list()
                 self.distances_w_amenity_bike[amenity_list] = dists.get_nearest_amenities_inbetween(
                     G_bike, self.work_coords, self.residence_coords, amenity_list, 10
                 )["distance"].to_list()
+            self.distances_w_amenity_walk[amenity_list] = self.distances_w_amenity_bike[amenity_list].copy()
                 
         else:
             self.distances_w_amenity_walk = None
@@ -111,6 +110,8 @@ class person:
         """
         Simulate a day in the life of the agent.
         """
+        print("Simulating a day...")
+        
         total_travel_time = 0
 
         travel_mode = None

@@ -164,6 +164,7 @@ print(len(pois), "POIs loaded")
 
 # Create cache for (key, value) → BallTree
 poi_trees = {}
+amenity_node_cache = {}
 
 def get_tree_for_tags(tag_list):
     """
@@ -183,6 +184,7 @@ def get_tree_for_tags(tag_list):
     # Convert coordinates to radians for BallTree
     coords = np.radians(filtered.geometry.apply(lambda p: (p.y, p.x)).tolist())
     tree = BallTree(coords, metric="haversine")
+    print(f"Created BallTree for tags: {tag_list}")
     poi_trees[tag_list] = tree
     return tree
     
@@ -232,53 +234,95 @@ def get_nearest_amenities(G, location, tag_list, max_count):
 
     
    
-def get_nearest_amenities_inbetween(G, location_start, location_end, tag_list, max_count):
+def get_nearest_amenities_inbetween(G, location_start, location_end, tag_list, max_count, path_resolution=5):
     """
     Get the nearest max_count amenities of specific tag types in between two locations.
     """
     # Get the nearest node to the start and end locations
     start_node = ox.distance.nearest_nodes(G, X=location_start[0], Y=location_start[1])
     end_node = ox.distance.nearest_nodes(G, X=location_end[0], Y=location_end[1])
+
+    print("1")
     
     # Get the shortest path between the two nodes
     path = nx.shortest_path(G, start_node, end_node, weight='length')
+    radius_m = nx.shortest_path_length(G, start_node, end_node, weight='length') / path_resolution
+
+    print("2")
+
+    # Sample nodes along the path at intervals of radius_m
+    sampled_nodes = [path[0]]
+    accumulated = 0
+    for u, v in zip(path[:-1], path[1:]):
+        edge_data = G.get_edge_data(u, v)
+        # If multiple edges, take the first one
+        if isinstance(edge_data, dict):
+            edge_length = edge_data[list(edge_data.keys())[0]].get('length', 0)
+        else:
+            edge_length = edge_data.get('length', 0)
+        accumulated += edge_length
+        if accumulated >= radius_m:
+            sampled_nodes.append(v)
+            accumulated = 0
+    if sampled_nodes[-1] != path[-1]:
+        sampled_nodes.append(path[-1])
+
+    print("3")
     
     # Get the coordinates of the path
-    path_coords = [(G.nodes[node]['y'], G.nodes[node]['x']) for node in path]
+    path_coords = [(G.nodes[node]['y'], G.nodes[node]['x']) for node in sampled_nodes]
     if not path_coords:
         raise ValueError("No valid path found between the start and end locations.")
+    
+    print("4")
     
     # Filter POIs by the list of tags
     filtered = pois[pois['main_tag'].isin(tag_list)].copy()
     if filtered.empty:
         raise ValueError(f"No POIs found for tags: {tag_list}")
     
+    print("5")
+    
     tree = get_tree_for_tags(tag_list)
     
-    # Query the BallTree for amenities within a certain distance from the path
-    path_coords_rad = np.radians(np.array(path_coords))
-    indices, distances = tree.query_radius(path_coords_rad, r=0.005, return_distance=True)
-    
-    # Collect the nearest amenities
+    # Query the BallTree for the k nearest amenities from each sampled node
+    k = max_count  # or a bit more, to ensure enough unique amenities
     results = []
-    for i in range(len(path_coords)):
-        for j in range(len(distances[i])):
-            amenity_index = indices[i][j]
-            amenity_distance = distances[i][j] * 6371000
-            row = filtered.iloc[int(amenity_index)].copy()
+    for coord in path_coords:
+        coord_rad = np.radians([coord])
+        dist, ind = tree.query(coord_rad, k=k)
+        for d, idx in zip(dist[0], ind[0]):
+            amenity_distance = d * 6371000
+            row = filtered.iloc[int(idx)].copy()
             row["distance"] = round(amenity_distance, 2)
             results.append(row)
+
+    print("6")
+
     gdf = gpd.GeoDataFrame(results)
     if "osmid" in gdf.columns:
         gdf = gdf.drop_duplicates(subset=["osmid"])
     else:
         gdf = gdf.drop_duplicates(subset=["geometry"])
-    gdf = gdf.sort_values("distance").head(max_count)
+    # ...after deduplication and before calculating distances...
     if not gdf.empty:
-        # Calculate shortest path distance from the start node to the amenity node and to the end node
-        gdf["amenity_node"] = gdf.geometry.apply(lambda p: ox.distance.nearest_nodes(G, X=p.centroid.x, Y=p.centroid.y))
-        gdf["distance"] = gdf.apply(lambda row: nx.shortest_path_length(G, start_node, row["amenity_node"], weight='length') + 
-                                     nx.shortest_path_length(G, row["amenity_node"], end_node, weight='length'), axis=1)
+        def get_cached_amenity_node(geometry):
+            # Use WKT as a unique key for geometry; or use amenity ID if available
+            key = geometry.wkt
+            if key in amenity_node_cache:
+                return amenity_node_cache[key]
+            node = ox.distance.nearest_nodes(G, X=geometry.centroid.x, Y=geometry.centroid.y)
+            amenity_node_cache[key] = node
+            return node
+
+        gdf["amenity_node"] = gdf.geometry.apply(get_cached_amenity_node)
+        amenity_nodes = gdf["amenity_node"].unique()
+        # Batch shortest path lengths
+        start_lengths = nx.single_source_dijkstra_path_length(G, start_node, weight='length')
+        end_lengths = nx.single_source_dijkstra_path_length(G, end_node, weight='length')
+        gdf["distance"] = gdf["amenity_node"].apply(
+            lambda n: start_lengths.get(n, np.inf) + end_lengths.get(n, np.inf)
+        )
         gdf = gdf.drop(columns=["amenity_node"])
         gdf = gdf.sort_values("distance").head(max_count)
     else:
@@ -287,4 +331,4 @@ def get_nearest_amenities_inbetween(G, location_start, location_end, tag_list, m
 
 #print(get_tree_for_tags(['pharmacy', 'park']))
 #print(get_nearest_amenities(G_bike, (5.486, 51.449), ['pharmacy', 'park'], 5))
-#print(get_nearest_amenities_inbetween(G_walk, (5.486, 51.449), (5.485, 51.448), ['pharmacy', 'park'], 5))
+print(get_nearest_amenities_inbetween(G_walk, (5.486, 51.449), (5.485, 51.448), ['pharmacy', 'park'], 5))
