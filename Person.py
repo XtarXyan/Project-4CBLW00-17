@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 import eindhovenDistsBallTree as dists
-import geopandas as gpd
+import pandas as pd
 import random
 
 
@@ -24,6 +24,7 @@ class person:
         self.curiosity = curiosity # Chance the agent will (recursively) pick the nearest amenity of a certain type over the following nearest one.
         self.work_travel_time = 0
         random.seed(seed)
+        self.df_travel = pd.DataFrame(columns=["travel_time", "mode", "amenity_type", "amenity_coords"])
         self.initialize_distances()
 
     def travel_time(self, distance, mode='walk'):
@@ -62,11 +63,11 @@ class person:
             self.distance_rw_walk = None
             self.distance_rw_bike = None
         
-        print("Distances from residence to work:")
-        print(self.distance_rw_walk)
-        print(self.distance_rw_bike)
+        print("Distance from residence to work:", self.distance_rw_walk)
 
         # Initialize distances for amenities
+        self.amenities_r_walk = {}
+        self.amenities_r_bike = {}
         self.distances_r_amenity_walk = {}
         self.distances_r_amenity_bike = {}
         
@@ -78,17 +79,22 @@ class person:
         print("Initializing distances for amenities...")
         for amenity_list in self.amenity_freqs.keys():
             # Each entry is a list of distances to the nearest amenities in that list
-            self.distances_r_amenity_walk[amenity_list] = dists.get_nearest_amenities(
+            self.amenities_r_walk[amenity_list] = dists.get_nearest_amenities(
                 G_walk, self.residence_coords, amenity_list, 10
-            )["distance"].to_list()
+            )
+            self.distances_r_amenity_walk[amenity_list] = self.amenities_r_walk[amenity_list]["distance"].to_list()
+            print(self.distances_r_amenity_walk[amenity_list])
 
-            self.distances_r_amenity_bike[amenity_list] = dists.get_nearest_amenities(
+            self.amenities_r_bike[amenity_list] = dists.get_nearest_amenities(
                 G_bike, self.residence_coords, amenity_list, 10
-            )["distance"].to_list()
+            )
+            self.distances_r_amenity_bike[amenity_list] = self.amenities_r_bike[amenity_list]["distance"].to_list()
                 
         print("Initializing work distances for amenities...")
         # Initialize distances for work amenities
         if self.work_coords:
+            self.amenities_w_walk = {}
+            self.amenities_w_bike = {}
             self.distances_w_amenity_walk = {}
             self.distances_w_amenity_bike = {}
             
@@ -96,10 +102,16 @@ class person:
             # how much distance they are from work to the amenity and back to residence.
             # This is done to simulate the agent's behavior of going to work and then visiting an amenity on the way home.
             for amenity_list in self.amenity_freqs.keys():
-                self.distances_w_amenity_bike[amenity_list] = dists.get_nearest_amenities_inbetween(
+                self.amenities_w_walk[amenity_list] = dists.get_nearest_amenities_inbetween(
+                    G_walk, self.work_coords, self.residence_coords, amenity_list, 10
+                )
+                self.distances_w_amenity_walk[amenity_list] = self.amenities_w_walk[amenity_list]["distance"].to_list()
+                print(self.distances_w_amenity_walk[amenity_list])
+
+                self.amenities_w_bike[amenity_list] = dists.get_nearest_amenities_inbetween(
                     G_bike, self.work_coords, self.residence_coords, amenity_list, 10
-                )["distance"].to_list()
-            self.distances_w_amenity_walk[amenity_list] = self.distances_w_amenity_bike[amenity_list].copy()
+                )
+                self.distances_w_amenity_bike[amenity_list] = self.amenities_w_bike[amenity_list]["distance"].to_list()
                 
         else:
             self.distances_w_amenity_walk = None
@@ -147,15 +159,28 @@ class person:
                     # Pick an amenity from the work location
                     for i in range(0, len(self.distances_w_amenity_walk[amenity_type] if travel_mode == 'walk' else self.distances_w_amenity_bike[amenity_type])):
                         if random.random() < self.curiosity:
-                            distance_to_amenity = self.distances_w_amenity_walk[amenity_type][i] if travel_mode == 'walk' else self.distances_w_amenity_bike[amenity_type][i]
+                            
+                            is_at_work = False  # The agent is no longer at work after visiting an amenity
+
+                            distance_to_amenity = self.distances_w_amenity_walk[amenity_type][i] - self.distance_rw_walk if travel_mode == 'walk' else self.distances_w_amenity_bike[amenity_type][i] - self.distance_rw_bike
+                            if distance_to_amenity < 1:
+                                # disregard if detour is too small
+                                break
+                            
                             print(f"Visiting {amenity_type} from work: {distance_to_amenity}")
+
 
                             # Calculate travel time to the amenity
                             travel_time = self.travel_time(distance_to_amenity, mode=travel_mode)
                             total_travel_time += travel_time
                             print(f"Travel time to {amenity_type} from work: {travel_time} minutes")
-
-                            is_at_work = False  # The agent is no longer at work after visiting an amenity
+                            self.df_travel.loc[len(self.df_travel)] = [
+                                travel_time,
+                                travel_mode,
+                                amenity_type,
+                                self.amenities_w_walk[amenity_type].iloc[i]["centroid"].coords[0] if travel_mode == 'walk' else self.amenities_w_bike[amenity_type].iloc[i]["centroid"].coords[0]
+                            ]
+                            
                             break
 
                 else:
@@ -167,8 +192,36 @@ class person:
 
                             # Calculate travel time to the amenity
                             travel_time = self.travel_time(distance_to_amenity, mode=travel_mode)
+
                             total_travel_time += travel_time
                             print(f"Travel time to {amenity_type} from residence: {travel_time} minutes")
+                            
+                            self.df_travel.loc[len(self.df_travel)] = [
+                                travel_time,
+                                travel_mode,
+                                amenity_type,
+                                self.amenities_r_walk[amenity_type].iloc[i]["centroid"].coords[0] if travel_mode == 'walk' else self.amenities_r_bike[amenity_type].iloc[i]["centroid"].coords[0]
+                            ]
                             break
         print(f"Total travel time for the day: {total_travel_time} minutes")
         return total_travel_time
+    
+
+# Example usage
+rcoords = dists.residences.sample(1).geometry.values[0].centroid.coords[0]
+wcoords = dists.offices.sample(1).geometry.values[0].centroid.coords[0]
+
+agent = person(
+residence_coords= rcoords, 
+work_coords= wcoords,
+work_freq=0.5,
+walk_speed=4,
+bike_speed=10,
+bike_freq=0.5,
+amenity_freqs={ ('cafe', 'park'): 0.5, ('school', 'restaurant'): 0.5 },
+seed=42
+)
+for i in range(0, 10):
+    print("Simulating day", i+1)
+    agent.simulate_day()
+print(agent.df_travel)

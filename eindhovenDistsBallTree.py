@@ -34,17 +34,35 @@ else:
     ox.save_graphml(G_walk, filepath=G_walk_fp)
     ox.save_graphml(G_bike, filepath=G_bike_fp)
 
-tags = {
+"""
+    'shop': [
+        'supermarket', 'convenience', 'bakery', 'butcher',
+        'greengrocer', 'clothes', 'clothing_store', 'electronics',
+        'garden_centre', 'hardware', 'marketplace', 'market'
+        ],
+    
     'amenity': [
         'pharmacy', 'hospital', 'clinic', 'doctors', 
         'school', 'kindergarten', 'college', 'university',  
-        'cafe', 'restaurant', 'bar', 'cinema', 'theatre',  
+        'cafe', 'restaurant', 'bar', 'cinema', 'theatre',
+        'fast_food', 'pub', 'biergarten', 'ice_cream', 
+        'community_centre', 'library', 'bicycle_rental',
+        'place_of_worship', 
+    ],
+"""
+
+tags = {
+
+    'amenity': [
+        'pharmacy', 'hospital', 'clinic', 'doctors', 
+        'school', 'kindergarten', 'college', 'university',  
+        'cafe', 'restaurant', 'bar', 'cinema', 'theatre',
         'community_centre', 'library', 'bicycle_rental',
         'place_of_worship', 
     ],
     'leisure': [
-        'park', 'fitness_centre', 'sports_centre', 'stadium', 
-        'dog_park', 'pitch', 'swimming_pool'
+        'park', 'playground', 'fitness_centre', 'sports_centre', 
+        'stadium', 'dog_park', 'pitch', 'swimming_pool'
     ]
 }
 
@@ -81,6 +99,7 @@ def save_to_pickle(data, fp):
 
 amenities_fp = "amenities.pickle"
 offices_fp = "offices.pickle"
+universities_fp = "universities.pickle"
 residences_fp = "residences.pickle"
 pois_fp = "pois.pickle"
 
@@ -117,6 +136,21 @@ if offices is None:
 # Combine the amenities and offices features
 workplaces = gpd.GeoDataFrame(pd.concat([amenities, offices], ignore_index=True))
 
+# Get the universities of the area
+universities = load_from_pickle(universities_fp)
+if universities is None:
+    print("Loading universities from OSM.")
+    # Get the universities of the area
+    universities = ox.features_from_place(place, tags={'amenity': ['university', 'college']})
+    # Filter for valid geometry types
+    universities = universities[universities.geometry.type.isin(["Polygon", "MultiPolygon", "Point"])]
+    # Add centroid column
+    universities["centroid"] = universities.geometry.centroid
+    # Convert to GeoDataFrame
+    universities = gpd.GeoDataFrame(universities, geometry='geometry', crs="EPSG:4326")
+    # Save the universities to a pickle file
+    save_to_pickle(universities, universities_fp)
+
 # Get the residences of the area
 residences = load_from_pickle(residences_fp)
 if residences is None:
@@ -148,19 +182,22 @@ if pois is None:
 
 tags = [
     'pharmacy', 'hospital', 'clinic', 'doctors', 
+    'school', 'kindergarten', 'college', 'university',  
     'cafe', 'restaurant', 'bar', 'cinema', 'theatre',  
     'community_centre', 'library', 'bicycle_rental',
     'place_of_worship', 
-    'park', 'fitness_centre', 'sports_centre', 'stadium', 
+    'park', 'playground', 'fitness_centre', 'sports_centre', 'stadium', 
     'dog_park', 'pitch', 'swimming_pool'
 ]
 
+
+"""
 print(pois.head())
 
 print(pois['main_tag'].unique())
 
 print(len(pois), "POIs loaded")
-
+"""
 
 # Create cache for (key, value) → BallTree
 poi_trees = {}
@@ -241,14 +278,10 @@ def get_nearest_amenities_inbetween(G, location_start, location_end, tag_list, m
     # Get the nearest node to the start and end locations
     start_node = ox.distance.nearest_nodes(G, X=location_start[0], Y=location_start[1])
     end_node = ox.distance.nearest_nodes(G, X=location_end[0], Y=location_end[1])
-
-    print("1")
     
     # Get the shortest path between the two nodes
     path = nx.shortest_path(G, start_node, end_node, weight='length')
     radius_m = nx.shortest_path_length(G, start_node, end_node, weight='length') / path_resolution
-
-    print("2")
 
     # Sample nodes along the path at intervals of radius_m
     sampled_nodes = [path[0]]
@@ -266,22 +299,16 @@ def get_nearest_amenities_inbetween(G, location_start, location_end, tag_list, m
             accumulated = 0
     if sampled_nodes[-1] != path[-1]:
         sampled_nodes.append(path[-1])
-
-    print("3")
     
     # Get the coordinates of the path
     path_coords = [(G.nodes[node]['y'], G.nodes[node]['x']) for node in sampled_nodes]
     if not path_coords:
         raise ValueError("No valid path found between the start and end locations.")
     
-    print("4")
-    
     # Filter POIs by the list of tags
     filtered = pois[pois['main_tag'].isin(tag_list)].copy()
     if filtered.empty:
         raise ValueError(f"No POIs found for tags: {tag_list}")
-    
-    print("5")
     
     tree = get_tree_for_tags(tag_list)
     
@@ -296,8 +323,6 @@ def get_nearest_amenities_inbetween(G, location_start, location_end, tag_list, m
             row = filtered.iloc[int(idx)].copy()
             row["distance"] = round(amenity_distance, 2)
             results.append(row)
-
-    print("6")
 
     gdf = gpd.GeoDataFrame(results)
     if "osmid" in gdf.columns:
@@ -315,8 +340,8 @@ def get_nearest_amenities_inbetween(G, location_start, location_end, tag_list, m
             amenity_node_cache[key] = node
             return node
 
+        # gdf["amenity_node"] = gdf.geometry.apply(lambda p: ox.distance.nearest_nodes(G, X=p.centroid.x, Y=p.centroid.y))
         gdf["amenity_node"] = gdf.geometry.apply(get_cached_amenity_node)
-        amenity_nodes = gdf["amenity_node"].unique()
         # Batch shortest path lengths
         start_lengths = nx.single_source_dijkstra_path_length(G, start_node, weight='length')
         end_lengths = nx.single_source_dijkstra_path_length(G, end_node, weight='length')
@@ -331,4 +356,4 @@ def get_nearest_amenities_inbetween(G, location_start, location_end, tag_list, m
 
 #print(get_tree_for_tags(['pharmacy', 'park']))
 #print(get_nearest_amenities(G_bike, (5.486, 51.449), ['pharmacy', 'park'], 5))
-print(get_nearest_amenities_inbetween(G_walk, (5.486, 51.449), (5.485, 51.448), ['pharmacy', 'park'], 5))
+#print(get_nearest_amenities_inbetween(G_walk, (5.486, 51.449), (5.485, 51.448), ['pharmacy', 'park'], 5))
