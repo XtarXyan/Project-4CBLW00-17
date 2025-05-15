@@ -95,8 +95,17 @@ tags = {
 # just use some generalized values that I got from asking Copilot - thanks, Copilot. 
     
 # Population density is measured here using people per km2.
-POP_DENSITY_MIN = 1600
-POP_DENSITY_MAX = 4632
+print('Enter minimum population density:')
+print('Low-density: 1610+ | Medium-density: 4632+ | High-density: 8631+ (not recommended)')
+minDensityInput = int(input())
+print('Enter maximum population density:')
+print('Recommended at least twice minimum bound size (or standard of 6000).')
+maxDensityInput = int(input())
+
+POP_DENSITY_MIN = minDensityInput
+POP_DENSITY_MAX = maxDensityInput
+
+print('Loading network from CBS file...this may take a while')
 
 # Big change: Eindhoven's admin levels are not there in OSM, only the adminsitrative boundaries
 # for Noord-Brabant, and so it's impossible to use the admin_level to extract the city. Instead,
@@ -203,15 +212,67 @@ for _, row in results_df.iterrows():
         },
         tooltip=f"{row['wijknaam']} ({row['score']})"
     )
-    geojson.add_child(folium.Popup(f'Score: {row["score"]}'))
     geojson.add_to(initial_map)
 
-# Save the initial map
-initial_map.save("eindhoven_initial_check_map.html")
-print("Initial map saved as eindhoven_initial_check_map.html")
+    # Validate geometry before calculating centroid
+    if row["geometry"].is_empty or not row["geometry"].is_valid:
+        print(f"Skipping invalid or empty geometry for wijknaam: {row['wijknaam']}")
+        continue
 
-# Not needed for this version:
-# eindhoven_buurten = pd.concat([eindhoven_buurten.reset_index(drop=True), results_df], axis=1)
+    # Calculate centroid
+    centroid = row["geometry"].centroid
+
+    # Add a visible caption at the centroid of the district
+    folium.Marker(
+        location=[centroid.y, centroid.x],
+        icon=folium.DivIcon(
+            html=f"""
+                <div style="font-size: 10px; color: black; text-align: center; font-family: 'Times New Roman';">
+                    {row['wijknaam']}
+                </div>
+            """
+        )
+    ).add_to(initial_map)
+
+# Add a legend to the map - this is a custom HTML element, since Folium does not have
+# native support for legend features.
+legend_html = """
+<div style="
+    position: fixed; 
+    bottom: 50px; left: 50px; width: 200px; height: 90px; 
+    background-color: white; z-index: 1000; font-size: 14px; opacity: 0.75; 
+    border: 2px solid black; padding: 10px; border-radius: 5px;">
+    <b>Legend</b><br>
+    <i style="background: green; width: 10px; height: 10px; display: inline-block; margin-right: 5px;"></i> Passing wijken<br>
+    <i style="background: red; width: 10px; height: 10px; display: inline-block; margin-right: 5px;"></i> Failing wijken<br>
+</div>
+"""
+
+legend_element = folium.Element(legend_html)
+initial_map.get_root().html.add_child(legend_element)
+
+# Title the map for clarity, using the density inputs:
+if (minDensityInput < 3500):
+    map_title = "Lowered-density Eindhoven 15-minute zoning"
+else: 
+    map_title = "Eindhoven 15-minute zoning using standardized population density"
+    
+title_html = f"""
+    <div style="
+        position: fixed; 
+        top: 10px; left: 50%; transform: translateX(-50%);
+        font-size: 10px; color: black; 
+        z-index: 1000; text-align: center; background-color: white; 
+        padding: 4px; border: 2px solid black; border-radius: 5px;">
+        {map_title}
+    </div>
+"""
+title_element = folium.Element(title_html)
+initial_map.get_root().html.add_child(title_element)
+
+# Save the initial map
+initial_map.save("eindhoven_initial_check_map_with_legend.html")
+print("Initial map with legend saved as eindhoven_initial_check_map_with_legend.html")
 
 # Expand the zones that scored "low" to see if we can improve their scores by expanding the isochrone. 
 # Note that this only tries for NEIGHBOURING zones.
@@ -283,9 +344,6 @@ print(f"Number of neighborhoods to plot: {len(final_results)}")
 # Debugging/Temporary solution: instead of trying to map this onto a folium map,
 # I created a matplotlib visualization of the neighbourhoods we may consider as
 # passing the tests.
-
-
-
 
 # # Plot the final map
 # m = folium.Map(location=[51.44, 5.48], zoom_start=12, tiles="cartodbpositron")
