@@ -105,13 +105,12 @@ def extract_neighborhood_indicators(neighborhood: str) -> dict:
 
 # List of specific neighborhoods/regions to analyze
 best_neighborhoods = [
-    'Amsterdam, Netherlands',  # Broader query
-    'Friedrichshain, Berlin, Germany',
-    'Sunnyside, Portland, Oregon, USA',
+    'Amsterdam, Netherlands',  # Broader query for similar pop. density to Centrum regions
+    'Friedrichshain, Berlin, Germany', # Similar-ish in size/density to Stratum
+    'Sunnyside, Portland, Oregon, USA', # Smaller, but similar composition-wise.
     'Christianshavn, Copenhagen Municipality, Denmark',
-    'El Poblenou, Barcelona, Spain',
-    'Shimokitazawa, Tokyo, Japan',
-    'Fitzroy, Melbourne, Australia'
+    'El Poblenou, Barcelona, Spain', 
+    'Fitzroy, Melbourne, Australia'# Wanted to check with the variety of a grid-based city 
 ]
 
 # Analyze each neighborhood/region

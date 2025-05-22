@@ -3,7 +3,6 @@ import geopandas as gpd
 import pandas as pd
 import networkx as nx
 import matplotlib.pyplot as plt
-import numpy as np
 import folium
 from shapely.geometry import Point, mapping
 from shapely.ops import unary_union
