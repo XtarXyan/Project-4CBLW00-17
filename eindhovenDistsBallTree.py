@@ -11,6 +11,21 @@ import os
 
 # BallTree approach
 
+# This script loads the networks and POIs from OSM for a specific place
+# and creates a BallTree for fast nearest neighbor queries.
+# There are two networks: one for walking and one for biking. There are also two types of calculations that this script can do:
+# 1. Get the nearest amenities of a specific type from a given location.
+# 2. Get the nearest amenities of a specific type in between two locations.
+
+# Particularly the second one is a little complicated. Essentially it computes an "optimization"
+# that a person might be looking for by stopping along the way between two locations.
+# The script also caches the results in pickle files for faster loading in the future.
+
+# Two other types of caching happen at runtime:
+# 1. The BallTree for each tag list is cached in memory.
+# 2. The amenity nodes are cached in memory to avoid recomputing them multiple times.
+# Surprisingly the second one is quite expensive which is why it is cached.
+
 place = 'Eindhoven, Netherlands'
 
 print('Loading networks v4')

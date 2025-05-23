@@ -4,13 +4,15 @@ import pandas as pd
 import random
 
 
-# Agent class simulates the behavior of an agent in a city.
+# Person class simulates the behavior of a person ("agent") in a city.
 # The agent has a residence and work location, and can travel to amenities based on their preferences and travel modes.
 # The agent's travel behavior is influenced by their "curiosity" and the frequency of visiting work and amenities.
 # The agent can travel by walking or biking, and the travel time is calculated based on the distance to the destination and the speed of the chosen mode of transport.
 # The agent's daily activities are simulated, including travel to work and visits to amenities.
 # The total travel time for the day is calculated and returned.
-# Thanks Copilot for writing my comments
+
+# Slight notice: most of the actual calculations are done in the eindhovenDistsBallTree.py file
+# Check that out for the actual distance calculations.
 
 class person:
     def __init__(self, residence_coords, work_coords=None, walk_speed=4, bike_speed=10, bike_freq=0.0, work_freq=1.0, amenity_freqs=None, curiosity=1.0, seed=0):
