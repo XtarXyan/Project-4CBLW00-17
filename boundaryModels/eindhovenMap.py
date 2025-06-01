@@ -69,7 +69,7 @@ tags = {
         'cafe', 'restaurant', 'bar', 'cinema', 'theatre',  
         'community_centre', 'library', 'bicycle_rental',
         'place_of_worship', 
-        # Last one I'm unsure of, especially since this is a "diverse" business plan? But nonetheless.
+        # Place of worship can be considered "key" ammenity for some.
     ],
     'leisure': [
         'park', 'fitness_centre', 'sports_centre', 'stadium', 
