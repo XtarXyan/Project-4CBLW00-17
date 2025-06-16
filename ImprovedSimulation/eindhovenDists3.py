@@ -48,7 +48,7 @@ tags = {
         'community_centre', 'library', 'bicycle_rental',
         'place_of_worship',
         # Place of worship can be considered "key" ammenity for some, so should be included.
-        'locker', 'parcel_locker', 'public_bathroom', 'public_toilet',
+        'locker', 'parcel_locker', 'public_bathroom', 'public_toilet'
     ],
     'leisure': [
         'park', 'fitness_centre', 'sports_centre', 'stadium', 
@@ -57,7 +57,8 @@ tags = {
     ],
     'shop' : [
         'supermarket', 'convenience', 'bakery', 'greengrocer', 'butcher',
-        'department_store', 'general', 'cosmetics', 'stationery'
+        'department_store', 'general', 'cosmetics', 'stationery',
+        'appliance', 'clothes', 'electronics', 'furniture', 'hardware'
     ]
 }
 
@@ -327,6 +328,7 @@ tags_main = [
     'dog_park', 'pitch', 'swimming_pool', 'nature_reserve',
     'supermarket', 'convenience', 'bakery', 'greengrocer', 'butcher',
     'department_store', 'general', 'cosmetics', 'stationery',
+    'appliance', 'clothes', 'electronics', 'furniture', 'hardware',
     'hub', # For mobility
     'locker', 'parcel_locker', 'public_bathroom', 'public_toilet', # For public facilities that may be in hubs
 ]
@@ -422,21 +424,18 @@ def get_nearest_amenities(G, location, tag_list, max_count):
     """
 
     # Ensure there are more or equal amenities than max_count
-    print("Getting nearest amenities from location")
     if len(features[features['main_tag'].isin(tag_list)]) < max_count:
         max_count = len(features[features['main_tag'].isin(tag_list)])
 
     if not isinstance(location, tuple) or len(location) != 2:
         raise ValueError("Location must be a tuple of (longitude, latitude).")
     
-    print("Getting cached amenity node")
     location_node = get_cached_amenity_node(G, location)
     
     # Ensure the location node is valid
     if location_node not in G.nodes:
         raise ValueError(f"Location node {location_node} is not a valid node in the graph.")
     
-    print("Getting nearest amenities from node")
     return get_nearest_amenities_from_node(G, location_node, tag_list, max_count)
 
 # @profile

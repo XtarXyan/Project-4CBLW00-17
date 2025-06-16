@@ -15,7 +15,7 @@ import random
 # Check that out for the actual distance calculations.
 
 class agent:
-    def __init__(self, residence, work=None, walk_speed=4.0, bike_speed=10.0, bike_freq=0.0, work_freq=1.0, features_freqs=None, curiosity=1.0, smart=True, seed=0):
+    def __init__(self, residence, work=None, walk_speed=4.0, bike_speed=10.0, bike_freq=0.0, work_freq=1.0, features_freqs=None, curiosity_factor=1, smart=True, seed=0):
         self.residence = residence  # This should be a gdf.GeoDataFrame with a single point representing the residence
         self.work = work  # This should be a gdf.GeoDataFrame with a single point representing the work location
         self.work_freq = work_freq  # Frequency of going to work (1.0 means every day)
@@ -23,10 +23,10 @@ class agent:
         self.bike_speed = bike_speed
         self.bike_freq = bike_freq # Frequency of biking (0.0 means never, 1.0 means always)
         self.features_freqs = features_freqs # Dictionary of amenity type lists and their frequencies (0.0 to 1.0)
-        self.curiosity = curiosity # Chance the agent will (recursively) pick the nearest amenity of a certain type over the following nearest one.
+        self.curiosity_factor = curiosity_factor # The agent will randomly pick from of the nearest curiosity_factor amenities
         self.smart = smart  # If True, the agent will optimize travel time by choosing points between work and residence to visit.
-        self.work_travel_time = 0
         random.seed(seed)
+        self.seed = seed  # Seed for random number generation
         self.df_travel = pd.DataFrame(columns=["day", "travel_time", "mode", "amenity_type", "feature_ID"])
         self.df_days = pd.DataFrame(columns=["day", "total_travel_time", "work_travel_time"])
         self.initialize_distances()
@@ -51,7 +51,7 @@ class agent:
         """
         Simulate a day in the life of the agent.
         """
-        # print("Simulating a day...")
+        
         if start_location is None:
             # If no location is provided, start at the residence's nearest node
             location = self.residence['nearest_node'].iloc[0]  # Start at the residence's nearest node
@@ -67,6 +67,7 @@ class agent:
         end_node = end_location['nearest_node'].iloc[0]  # Use the provided end location's nearest node
 
         total_travel_time = starting_travel_time  # Start with the provided travel time, if any
+        work_travel_time = 0  # Initialize work travel time
 
         travel_mode = None
 
@@ -85,11 +86,18 @@ class agent:
             # Travel to work
             if self.work is not None:
                 # print("Agent is going to work today.")
-                self.work_travel_time = self.travel_time(
+                work_travel_time = self.travel_time(
                     dists.get_distances(self.graph, location, self.work['nearest_node'].iloc[0]), mode=travel_mode)
-                total_travel_time += self.work_travel_time
+                total_travel_time += work_travel_time
                 location = work_node # Update location to work's nearest node
-                # print(f"Travel time to work: {self.work_travel_time} minutes")
+                self.df_travel.loc[len(self.df_travel)] = [
+                    len(self.df_days) + 1,  # day number
+                    work_travel_time,
+                    travel_mode,
+                    'work',
+                    self.work.index[0]  # Use the index of the work location as feature_ID
+                ]
+                # print(f"Travel time to work: {work_travel_time} minutes")
             else:
                 print("No work location specified.")
         
@@ -110,67 +118,67 @@ class agent:
             # Check if the agent is smart and this is the last amenity to visit
             if amenity_type == sampled_amenities[-1] and self.smart: # Check if it is the last amenity to visit
                 
-                amenities = dists.get_nearest_amenities_inbetween(
-                    self.graph, location, end_node, amenity_type, 10
+                amenities = dists.get_nearest_amenities_from_node(
+                    self.graph, location, amenity_type, max_count=self.curiosity_factor
                 )
-                for i in range(0, len(amenities)):
-                    if random.random() < self.curiosity: 
+                i = random.randint(0, len(amenities) - 1)
+                
+                distance_to_amenity = amenities.iloc[i]["distance"] - dists.get_distances(
+                    self.graph, end_node, location
+                )
 
-                        distance_to_amenity = amenities.iloc[i]["distance"] - dists.get_distances(
-                            self.graph, end_node, location
-                        )
+                self.location = end_node
 
-                        self.location = end_node
-
-                        if distance_to_amenity < 1:
-                            # disregard if detour is too small
-                            break
-                        
-                        # print(f"Visiting {amenity_type} on the way home: {distance_to_amenity}")
+                if distance_to_amenity < 1:
+                    # disregard if detour is too small
+                    break
+                
+                # print(f"Visiting {amenity_type} on the way home: {distance_to_amenity}")
 
 
-                        # Calculate travel time to the amenity
-                        travel_time = self.travel_time(distance_to_amenity, mode=travel_mode)
-                        total_travel_time += travel_time
-                        # print(f"Travel time to {amenity_type} from work: {travel_time} minutes")
-                        self.df_travel.loc[len(self.df_travel)] = [
-                            len(self.df_days) + 1,  # day number
-                            travel_time,
-                            travel_mode,
-                            amenity_type,
-                            amenities.index[i]  # Use the index of the amenity as feature_ID
-                        ]
-                        
-                        break
+                # Calculate travel time to the amenity
+                travel_time = self.travel_time(distance_to_amenity, mode=travel_mode)
+                total_travel_time += travel_time
+                # print(f"Travel time to {amenity_type} from work: {travel_time} minutes")
+                self.df_travel.loc[len(self.df_travel)] = [
+                    len(self.df_days) + 1,  # day number
+                    travel_time,
+                    travel_mode,
+                    amenity_type,
+                    amenities.index[i]  # Use the index of the amenity as feature_ID
+                ]
+                
+                break
 
             else:
                 # print(f"Visiting {amenity_type} from current location: {location}")
                 # Pick an amenity from the current location
+                
                 amenities = dists.get_nearest_amenities_from_node(
-                    self.graph, location, amenity_type, 10
+                    self.graph, location, amenity_type, max_count=self.curiosity_factor
                 )
-                for i in range(0, len(amenities)):
-                    if random.random() < self.curiosity:
-                        distance_to_amenity = amenities.iloc[i]["distance"]
-                        # print(f"Visiting {amenity_type}: {distance_to_amenity} meters")
+                i = random.randint(0, len(amenities) - 1)
+                
+                distance_to_amenity = amenities.iloc[i]["distance"]
+                # print(f"Visiting {amenity_type}: {distance_to_amenity} meters")
 
-                        # Calculate travel time to the amenity
-                        travel_time = self.travel_time(distance_to_amenity, mode=travel_mode)
+                # Calculate travel time to the amenity
+                travel_time = self.travel_time(distance_to_amenity, mode=travel_mode)
 
-                        total_travel_time += travel_time
-                        # print(f"Travel time to {amenity_type}: {travel_time} minutes")
+                total_travel_time += travel_time
+                # print(f"Travel time to {amenity_type}: {travel_time} minutes")
 
-                        
-                        self.location = amenities.iloc[i]["centroid"].coords[0]
-                        
-                        self.df_travel.loc[len(self.df_travel)] = [
-                            len(self.df_days) + 1,  # day number
-                            travel_time,
-                            travel_mode,
-                            amenity_type,
-                            amenities.index[i]
-                        ]
-                        break
+                
+                self.location = amenities.iloc[i]["centroid"].coords[0]
+                
+                self.df_travel.loc[len(self.df_travel)] = [
+                    len(self.df_days) + 1,  # day number
+                    travel_time,
+                    travel_mode,
+                    amenity_type,
+                    amenities.index[i]
+                ]
+                break
         # Return to residence if not already there
         if location != end_node:
             # print("Returning to residence...")
@@ -182,7 +190,7 @@ class agent:
                 len(self.df_days) + 1,  # day number
                 travel_time,
                 travel_mode,
-                'residence',
+                'residence' if end_location.iloc[0]['main_tag'] != 'hub' else 'hub',
                 end_location.index[0]  # Use the index of the residence as feature_ID
             ]
         # print(f"Total travel time for the day: {total_travel_time} minutes")
@@ -190,7 +198,7 @@ class agent:
         self.df_days.loc[len(self.df_days)] = [
             len(self.df_days) + 1,
             total_travel_time,
-            self.work_travel_time,
+            work_travel_time,
         ]
 
         # Return the last row of df_days and df_travel for the day
@@ -252,21 +260,21 @@ class agent:
             len(self.df_days),  # day number
             hub_travel_time,
             travel_mode,
-            'hub',
+            'residence',
             nearest_hub.index[0]  # Use the index of the hub as feature_ID
         ]
         # Update the total travel time for the day
         self.df_days.loc[len(self.df_days) - 1] = [
             len(self.df_days),  # day number
             total_travel_time + self.df_days['total_travel_time'].iloc[-1],  # add final hub travel time to total travel time
-            self.work_travel_time,  # work travel time remains the same
+            self.df_days.loc[len(self.df_days) - 1, 'work_travel_time'],  # work travel time remains the same
         ]
 
         # Return the last row of df_days and df_travel for the day
         print("Day with hubs simulation complete.")
         return self.df_travel[self.df_travel['day'] == len(self.df_days)], self.df_days.iloc[-1]
 
-    def simulate_comparison(self, days=1, match_sampled_amenities=False):
+    def simulate_comparison(self, days=1, match_sampled_amenities=True):
         """
         Simulate multiple days of the agent's travel behavior.
         """

@@ -162,3 +162,5 @@ cython_debug/
 wijkenbuurten_2023_v2.gpkg
 *.feather
 *.h5
+*.xlsx
+ImprovedSimulation/features.pickle
