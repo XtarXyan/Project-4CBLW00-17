@@ -1,0 +1,4 @@
+# 4CBLW00-17: Team 10 
+This repository contains all of the programming components created for Team 10's 4CBLW00-17 project, including simulation models, bound-calculations, and the code related to the visualizations seen in the midterm presentation and the final report. In its totality, this should serve as a comprehensive showcase of the work done over the last 9 weeks on the modelling side.
+
+The code included here was commented on to the best of our ability, and has been conveniently organized for increased readability; an additional README file is included in specific sub-directories to elaborate on what each folder's contents include. Each file's name is meant to as accurately reflect its function as possible.
