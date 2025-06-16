@@ -46,8 +46,9 @@ tags = {
         'school', 'kindergarten', 'college', 'university',  
         'cafe', 'restaurant', 'bar', 'cinema', 'theatre',  
         'community_centre', 'library', 'bicycle_rental',
-        'place_of_worship'
+        'place_of_worship',
         # Place of worship can be considered "key" ammenity for some, so should be included.
+        'locker', 'parcel_locker', 'public_bathroom', 'public_toilet',
     ],
     'leisure': [
         'park', 'fitness_centre', 'sports_centre', 'stadium', 
@@ -326,7 +327,8 @@ tags_main = [
     'dog_park', 'pitch', 'swimming_pool', 'nature_reserve',
     'supermarket', 'convenience', 'bakery', 'greengrocer', 'butcher',
     'department_store', 'general', 'cosmetics', 'stationery',
-    'hub'
+    'hub', # For mobility
+    'locker', 'parcel_locker', 'public_bathroom', 'public_toilet', # For public facilities that may be in hubs
 ]
 
 def get_all_pairs_distances(G):

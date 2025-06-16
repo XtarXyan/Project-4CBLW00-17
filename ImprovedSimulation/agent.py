@@ -43,15 +43,15 @@ class agent:
         return time_hours * 60
     
     def initialize_distances(self):
-        print("Loading graph...")
+        # print("Loading graph...")
         self.graph = dists.get_data()['graph']
-        print("Graph loaded.") 
+        # print("Graph loaded.") 
 
-    def simulate_day(self, start_location=None, end_location=None, starting_travel_time = 0): # Locations should be gdf entries
+    def simulate_day(self, start_location=None, end_location=None, starting_travel_time = 0, sampled_amenities = None): # Locations should be gdf entries
         """
         Simulate a day in the life of the agent.
         """
-        print("Simulating a day...")
+        # print("Simulating a day...")
         if start_location is None:
             # If no location is provided, start at the residence's nearest node
             location = self.residence['nearest_node'].iloc[0]  # Start at the residence's nearest node
@@ -61,7 +61,7 @@ class agent:
         
         if end_location is None:
             # If no end location is provided, end at the residence's nearest node
-            print("No end location provided, ending at residence.")
+            # print("No end location provided, ending at residence.")
             end_location = self.residence
 
         end_node = end_location['nearest_node'].iloc[0]  # Use the provided end location's nearest node
@@ -73,10 +73,10 @@ class agent:
         # Check if the agent is going to bike today
         if random.random() < self.bike_freq:
             travel_mode = 'bike'
-            print("Agent is biking today.")
+            # print("Agent is biking today.")
         else:
             travel_mode = 'walk'
-            print("Agent is walking today.")
+            # print("Agent is walking today.")
 
         work_node = self.work['nearest_node'].iloc[0] if self.work is not None else None
 
@@ -93,19 +93,18 @@ class agent:
             else:
                 print("No work location specified.")
         
-        # Visit amenities based on frequency
-        if self.features_freqs is None:
-            print("No amenity frequencies specified.")
-            return total_travel_time
-        
-        # Sample amenities based on their frequencies
-        sampled_amenities = random.choices(
-            list(self.features_freqs.keys()), 
-            weights=list(self.features_freqs.values()), 
-            k=1
-        )
-
-        # print(f"Sampled amenities for the day: {sampled_amenities}")
+        if sampled_amenities is None:
+            # Visit amenities based on frequency
+            if self.features_freqs is None:
+                print("No amenity frequencies specified.")
+                return
+            
+            # Sample amenities based on their frequencies
+            sampled_amenities = random.choices(
+                list(self.features_freqs.keys()), 
+                weights=list(self.features_freqs.values()), 
+                k=1
+            )
 
         for amenity_type in sampled_amenities:
             # Check if the agent is smart and this is the last amenity to visit
@@ -153,13 +152,13 @@ class agent:
                 for i in range(0, len(amenities)):
                     if random.random() < self.curiosity:
                         distance_to_amenity = amenities.iloc[i]["distance"]
-                        print(f"Visiting {amenity_type}: {distance_to_amenity} meters")
+                        # print(f"Visiting {amenity_type}: {distance_to_amenity} meters")
 
                         # Calculate travel time to the amenity
                         travel_time = self.travel_time(distance_to_amenity, mode=travel_mode)
 
                         total_travel_time += travel_time
-                        print(f"Travel time to {amenity_type}: {travel_time} minutes")
+                        # print(f"Travel time to {amenity_type}: {travel_time} minutes")
 
                         
                         self.location = amenities.iloc[i]["centroid"].coords[0]
@@ -174,11 +173,11 @@ class agent:
                         break
         # Return to residence if not already there
         if location != end_node:
-            print("Returning to residence...")
+            # print("Returning to residence...")
             distance_to_residence = dists.get_distances(self.graph, location, end_node)
             travel_time = self.travel_time(distance_to_residence, mode=travel_mode)
             total_travel_time += travel_time
-            print(f"Travel time back to residence: {travel_time} minutes")
+            # print(f"Travel time back to residence: {travel_time} minutes")
             self.df_travel.loc[len(self.df_travel)] = [
                 len(self.df_days) + 1,  # day number
                 travel_time,
@@ -186,20 +185,24 @@ class agent:
                 'residence',
                 end_location.index[0]  # Use the index of the residence as feature_ID
             ]
-        print(f"Total travel time for the day: {total_travel_time} minutes")
+        # print(f"Total travel time for the day: {total_travel_time} minutes")
         # Flatten the sampled amenities list into a string
         self.df_days.loc[len(self.df_days)] = [
             len(self.df_days) + 1,
             total_travel_time,
             self.work_travel_time,
         ]
+
+        # Return the last row of df_days and df_travel for the day
+        # print("Day simulation complete.")
+        return self.df_travel[self.df_travel['day'] == len(self.df_days)], self.df_days.iloc[-1]
     
-    def simulate_day_with_hubs(self):
+    def simulate_day_with_hubs(self, sampled_amenities=None):
         """
         Simulate a day in the life of the agent with hubs.
         This method is similar to simulate_day but includes logic for visiting hubs.
         """
-        print("Simulating a day with hubs...")
+        # print("Simulating a day with hubs...")
         
         travel_mode = 'walk' # Assuming the agent will travel to a hub, they will walk
 
@@ -218,7 +221,7 @@ class agent:
         hub_distance = nearest_hub['distance'].iloc[0]
         hub_travel_time = self.travel_time(hub_distance, mode=travel_mode)
 
-        print(f"Nearest hub found: {nearest_hub.iloc[0]['centroid'].coords[0]} with distance {hub_distance} meters and travel time {hub_travel_time} minutes.")
+        # print(f"Nearest hub found: {nearest_hub.iloc[0]['centroid'].coords[0]} with distance {hub_distance} meters and travel time {hub_travel_time} minutes.")
         # Track the travel to the hub
         self.df_travel.loc[len(self.df_travel)] = [
             len(self.df_days + 1),  # day number
@@ -237,7 +240,7 @@ class agent:
         self.bike_freq = 1.0
 
         # Simulate day from and back to hub
-        self.simulate_day(start_location=nearest_hub, end_location=nearest_hub, starting_travel_time=hub_travel_time)
+        self.simulate_day(start_location=nearest_hub, end_location=nearest_hub, starting_travel_time=hub_travel_time, sampled_amenities=sampled_amenities)
 
         # Restore the original biking frequency
         self.bike_freq = original_bike_freq
@@ -259,4 +262,73 @@ class agent:
             self.work_travel_time,  # work travel time remains the same
         ]
 
+        # Return the last row of df_days and df_travel for the day
+        print("Day with hubs simulation complete.")
+        return self.df_travel[self.df_travel['day'] == len(self.df_days)], self.df_days.iloc[-1]
 
+    def simulate_comparison(self, days=1, match_sampled_amenities=False):
+        """
+        Simulate multiple days of the agent's travel behavior.
+        """
+        df_travel_hubs = pd.DataFrame(columns=self.df_travel.columns)
+        df_days_hubs = pd.DataFrame(columns=self.df_days.columns)
+        df_travel_nohubs = pd.DataFrame(columns=self.df_travel.columns)
+        df_days_nohubs = pd.DataFrame(columns=self.df_days.columns)
+
+        for day in range(1, days + 1):
+            # print(f"Simulating day {day}...")
+            if match_sampled_amenities:
+                # Visit amenities based on frequency
+                if self.features_freqs is None:
+                    print("No amenity frequencies specified.")
+                    return
+
+                # Sample amenities based on their frequencies
+                sampled_amenities = random.choices(
+                    list(self.features_freqs.keys()), 
+                    weights=list(self.features_freqs.values()), 
+                    k=1
+                )
+                rows_hubs = self.simulate_day_with_hubs(sampled_amenities=sampled_amenities)
+                rows_nohubs = self.simulate_day(starting_travel_time=0, sampled_amenities=sampled_amenities)
+            else:
+                rows_hubs = self.simulate_day_with_hubs()
+                rows_nohubs = self.simulate_day(starting_travel_time=0)
+
+            # Check if the simulation returned valid results
+            if rows_nohubs is None and rows_hubs is None:
+                print("Both simulate_day and simulate_day_with_hubs returned None.")
+                continue
+
+            if rows_nohubs is None:
+                print("simulate_day returned None.")
+                continue
+
+            if rows_hubs is None:
+                print("simulate_day_with_hubs returned None.")
+                continue
+
+            rows_hubs_travel, rows_hubs_days = rows_hubs
+            rows_nohubs_travel, rows_nohubs_days = rows_nohubs
+
+            # Append the results to the respective DataFrames
+            df_travel_hubs = pd.concat([df_travel_hubs, rows_hubs_travel], ignore_index=True)
+            df_days_hubs.loc[len(df_days_hubs)] = rows_hubs_days
+            df_travel_nohubs = pd.concat([df_travel_nohubs, rows_nohubs_travel], ignore_index=True)
+            df_days_nohubs.loc[len(df_days_nohubs)] = rows_nohubs_days
+
+
+
+        # print("Simulation complete.")
+        # Reset the index of the DataFrames
+        df_travel_hubs.reset_index(drop=True, inplace=True)
+        df_days_hubs.reset_index(drop=True, inplace=True)
+        df_travel_nohubs.reset_index(drop=True, inplace=True)
+        df_days_nohubs.reset_index(drop=True, inplace=True)
+        # Return the DataFrames for travel and days with and without hubs
+        return {
+            'travel_hubs': df_travel_hubs,
+            'days_hubs': df_days_hubs,
+            'travel_nohubs': df_travel_nohubs,
+            'days_nohubs': df_days_nohubs
+        }

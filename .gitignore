@@ -161,3 +161,4 @@ cython_debug/
 *.json
 wijkenbuurten_2023_v2.gpkg
 *.feather
+*.h5
