@@ -164,3 +164,4 @@ wijkenbuurten_2023_v2.gpkg
 *.h5
 *.xlsx
 ImprovedSimulation/features.pickle
+*.pickle
